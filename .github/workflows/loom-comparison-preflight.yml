@@ -1,0 +1,62 @@
+name: Loom comparison preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full contribution commit to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require an exact source commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zlareb1/deja-vu
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Verify the checked-out commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"'
+      - name: Required race suite
+        run: go test ./... -race -count=1
+      - name: Required vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: latest
+          install-only: true
+          skip-cache: true
+      - name: Required lint
+        run: golangci-lint run
+      - name: Required build
+        run: go build ./cmd/deja
+      - name: Native generated-doc checks
+        run: |
+          go run ./scripts/gennav
+          go run ./scripts/genmatrix
+          go run ./scripts/genregistry
+          go run ./scripts/genfeed
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+      - name: Source receipt
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git status --short
