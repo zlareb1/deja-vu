@@ -12,7 +12,51 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  race:
+    name: Required race suite ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Require an exact source commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zlareb1/deja-vu
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Verify the checked-out commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"'
+      - name: Pick this native shard's tests
+        id: pick
+        run: go run ./scripts/testshard -shard ${{ matrix.shard }} -of 3 >> "$GITHUB_OUTPUT"
+        shell: bash
+      - name: Native Linux race command
+        run: go test -race -count=1 -timeout 20m -coverprofile=coverage.out -covermode=atomic -run "$RUN" -skip "$SKIP" ./...
+        shell: bash
+        env:
+          RUN: ${{ steps.pick.outputs.run }}
+          SKIP: ${{ steps.pick.outputs.skip }}
+      - name: Source receipt
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git status --short
+
+  required:
+    name: Required vet, lint, build and generators
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -34,8 +78,6 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"'
-      - name: Required race suite
-        run: go test ./... -race -count=1
       - name: Required vet
         run: go vet ./...
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
